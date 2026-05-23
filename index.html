@@ -37,6 +37,7 @@
         .new-chat-btn:hover { background: #2d2e30; }
         #history-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
         .history-item { padding: 10px 15px; border-radius: 8px; cursor: pointer; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: transparent; transition: 0.2s; }
+        .history-item.active { background: #2d2e30; border-left: 3px solid var(--accent); }
         .history-item:hover { background: #2d2e30; }
         .logout-btn { background: transparent; border: 1px solid #ef4444; color: #ef4444; padding: 8px; border-radius: 18px; cursor: pointer; margin-top: 10px; font-weight: bold; }
         .logout-btn:hover { background: rgba(239, 68, 68, 0.1); }
@@ -55,7 +56,7 @@
         .ai-row .message { background-color: transparent; padding-left: 0; width: 100%; }
         .ai-row.admin-mode-active .message { border-left: 3px solid var(--accent); padding-left: 15px; }
         
-        .uploaded-img, .generated-img { max-width: 300px; max-height: 300px; border-radius: 8px; margin-top: 10px; border: 1px solid #3c4043; }
+        .uploaded-img { max-width: 300px; max-height: 300px; border-radius: 8px; margin-top: 10px; border: 1px solid #3c4043; }
 
         pre { background: var(--code-bg); padding: 15px; border-radius: 8px; overflow-x: auto; position: relative; border: 1px solid #3c4043; margin: 10px 0; font-family: 'Consolas', monospace; }
         .copy-btn { position: absolute; top: 8px; right: 8px; background: #282a2c; color: #e3e3e3; border: 1px solid #3c4043; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; }
@@ -131,7 +132,7 @@
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
-        // Senin Tam Firebase Bilgilerin
+        // Senin Firebase Proje Bilgilerin
         const firebaseConfig = {
             apiKey: "AIzaSyDHLts0hwnw1TzCddyAKb4vwrfWxaPGQAA",
             authDomain: "hackerai-93c7d.firebaseapp.com",
@@ -147,8 +148,9 @@
         const db = getFirestore(app);
         const googleProvider = new GoogleAuthProvider();
 
+        // Tarayıcı Engellerini Aşmak İçin Localhost / 127.0.0.1 Kullanıyoruz
         const OLLAMA_TARGET = "http://127.0.0.1:11434"; 
-        const DEFAULT_MODEL = "qwen2.5:1.5b-instruct-q2_K"; // RAM Dostu ve Akıllı Sürüm
+        const DEFAULT_MODEL = "qwen2.5:1.5b-instruct-q2_K"; 
         const VISION_MODEL = "qwen2.5-vl";
 
         const authContainer = document.getElementById('auth-container');
@@ -176,7 +178,7 @@
         let isAdmin = false;
         let selectedImageBase64 = null;
         let currentChatId = null;
-        let userChats = {};
+        let userChats = {}; // Tüm sohbetlerin tutulduğu ana nesne
 
         googleLoginBtn.addEventListener('click', async () => {
             try { await signInWithPopup(auth, googleProvider); } catch (err) { alert("Google Hata: " + err.message); }
@@ -213,29 +215,50 @@
                 authContainer.style.display = 'flex';
                 chatWindow.innerHTML = '';
                 historyList.innerHTML = '';
+                userChats = {};
+                currentChatId = null;
             }
         });
 
+        // Verileri Buluttan Çekme (MESAJLARIN KALMASINI SAĞLAYAN KISIM)
         async function loadChatsFromFirebase() {
             if(!currentUser) return;
-            statusIndicator.textContent = "Bulut senkronizasyonu aktif...";
+            statusIndicator.textContent = "Bulut yükleniyor...";
             try {
                 const docRef = doc(db, "users", currentUser.uid);
                 const docSnap = await getDoc(docRef);
-                userChats = docSnap.exists() ? (docSnap.data().chats || {}) : {};
+                
+                if (docSnap.exists() && docSnap.data().chats) {
+                    userChats = docSnap.data().chats;
+                } else {
+                    userChats = {};
+                }
+                
                 renderHistory();
-                if (Object.keys(userChats).length > 0) {
-                    currentChatId = Object.keys(userChats).pop();
+                
+                // Eğer daha önceden kalan sohbet varsa son sohbeti yükle, yoksa yeni aç
+                const keys = Object.keys(userChats);
+                if (keys.length > 0) {
+                    currentChatId = keys[keys.length - 1];
                     loadChat(currentChatId);
-                } else { startNewChat(); }
-            } catch (e) { console.error(e); }
+                } else { 
+                    startNewChat(); 
+                }
+            } catch (e) { 
+                console.error("Firebase veri yükleme hatası:", e); 
+            }
             statusIndicator.textContent = isAdmin ? "Sistem: Uncensored Admin" : "Sistem: Filtreli (Normal)";
         }
 
+        // Verileri Buluta Yedekleme
         async function syncWithFirebase() {
-            if(!currentUser || !currentChatId) return;
-            try { await setDoc(doc(db, "users", currentUser.uid), { chats: userChats }, { merge: true }); } 
-            catch (e) { console.error(e); }
+            if(!currentUser) return;
+            try { 
+                const docRef = doc(db, "users", currentUser.uid);
+                await setDoc(docRef, { chats: userChats }, { merge: true }); 
+            } catch (e) { 
+                console.error("Firebase senkronizasyon hatası:", e); 
+            }
         }
 
         userPrompt.addEventListener('input', function() {
@@ -254,12 +277,14 @@
             reader.readAsDataURL(file);
         });
 
+        // Sol Menüdeki Geçmişi Çizdirme
         function renderHistory() {
             historyList.innerHTML = '';
             Object.keys(userChats).reverse().forEach(id => {
                 const item = document.createElement('div');
                 item.classList.add('history-item');
-                item.textContent = userChats[id].title || "Eski Sohbet";
+                if(id === currentChatId) item.classList.add('active');
+                item.textContent = userChats[id].title || "Yeni Sohbet";
                 item.onclick = () => loadChat(id);
                 historyList.appendChild(item);
             });
@@ -269,16 +294,19 @@
             currentChatId = 'chat_' + Date.now();
             userChats[currentChatId] = { title: "Yeni Sohbet", messages: [] };
             chatWindow.innerHTML = '';
-            syncWithFirebase();
             renderHistory();
+            syncWithFirebase();
         }
 
         function loadChat(id) {
             currentChatId = id;
             chatWindow.innerHTML = '';
-            userChats[id].messages.forEach(msg => {
-                appendMessageToUI(msg.text, msg.sender, msg.imgData, msg.isGeneratedImg);
-            });
+            renderHistory();
+            if(userChats[id] && userChats[id].messages) {
+                userChats[id].messages.forEach(msg => {
+                    appendMessageToUI(msg.text, msg.sender, msg.imgData);
+                });
+            }
         }
 
         function formatAIResponse(rawText) {
@@ -302,7 +330,7 @@
             navigator.clipboard.writeText(codeText).then(() => { alert("Kod kopyalandı!"); });
         };
 
-        function appendMessageToUI(text, sender, imgData = null, isGeneratedImg = false) {
+        function appendMessageToUI(text, sender, imgData = null) {
             const row = document.createElement('div');
             row.classList.add('message-row', `${sender}-row`);
             if(sender === 'ai' && isAdmin) row.classList.add('admin-mode-active');
@@ -310,13 +338,13 @@
             const msgDiv = document.createElement('div');
             msgDiv.classList.add('message');
 
-            if(sender === 'ai' && !isGeneratedImg) {
+            if(sender === 'ai') {
                 msgDiv.innerHTML = formatAIResponse(text);
             } else {
                 msgDiv.textContent = text;
             }
 
-            if (imgData && !isGeneratedImg) {
+            if (imgData) {
                 const img = document.createElement('img');
                 img.src = `data:image/jpeg;base64,${imgData}`;
                 img.classList.add('uploaded-img');
@@ -328,6 +356,7 @@
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
 
+        // BAŞLIĞI VE MESAJLARI KALICI YAPAN KRİTİK FONKSİYON
         async function handleSend() {
             const promptText = userPrompt.value.trim();
             if (!promptText && !selectedImageBase64) return;
@@ -335,13 +364,16 @@
 
             if (!currentChatId) startNewChat();
 
-            if (userChats[currentChatId].messages.length === 0) {
-                userChats[currentChatId].title = promptText.substring(0, 20) || "Kod Analizi";
-            }
-
+            // Kullanıcı mesajını yerel belleğe ve ekrana ekle
             userChats[currentChatId].messages.push({ sender: 'user', text: promptText, imgData: selectedImageBase64 });
             appendMessageToUI(promptText, 'user', selectedImageBase64);
             
+            // Eğer ilk mesajsa sohbet konusunu otomatik güncelle (Senin istediğin gibi)
+            if (userChats[currentChatId].messages.length === 1 || userChats[currentChatId].title === "Yeni Sohbet") {
+                userChats[currentChatId].title = promptText.substring(0, 24) + (promptText.length > 24 ? "..." : "");
+                renderHistory();
+            }
+
             userPrompt.value = '';
             userPrompt.style.height = '24px';
             previewArea.innerHTML = '';
@@ -349,7 +381,7 @@
 
             try {
                 const activeModel = selectedImageBase64 ? VISION_MODEL : DEFAULT_MODEL;
-                const sysInstruction = isAdmin ? "" : "Sen kurallara uyan, filtreli ve net kodlar yazan bir yazılım asistanısın.";
+                const sysInstruction = isAdmin ? "" : "Sen kurallara uyan, filtreli, net kodlar ve cevaplar yazan bir yardımcı asistanısın.";
 
                 const bodyPayload = {
                     model: activeModel,
@@ -367,14 +399,22 @@
                     body: JSON.stringify(bodyPayload)
                 });
 
+                if (!response.ok) throw new Error("Sunucu hatası");
+
                 const data = await response.json();
+                
+                // Yapay zeka yanıtını belleğe ekle ve ekrana bas
                 userChats[currentChatId].messages.push({ sender: 'ai', text: data.response });
                 appendMessageToUI(data.response, 'ai');
+                
+                // Firebase'e kalıcı olarak fırlat
                 await syncWithFirebase();
-                renderHistory();
+
             } catch (error) {
-                appendMessageToUI("Ollama Motoru Kapalı. Sunucuyu kontrol et.", 'ai');
+                console.error(error);
+                appendMessageToUI("Ollama Motoru Kapalı. Sunucuyu kontrol et. Termux'ta 'ollama serve' açık olduğundan emin ol.", 'ai');
             }
+            
             statusIndicator.textContent = isAdmin ? "Sistem: Uncensored Admin" : "Sistem: Filtreli (Normal)";
             selectedImageBase64 = null;
         }
