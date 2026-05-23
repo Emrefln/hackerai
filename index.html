@@ -1,152 +1,315 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ollama Core System</title>
-    <style>
-        body { margin: 0; padding: 0; background-color: #0b0f19; color: #f1f5f9; font-family: monospace; display: flex; flex-direction: column; height: 100vh; }
-        #status-bar { background-color: #111827; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #1f2937; font-size: 13px; }
-        .mode-normal { color: #3b82f6; font-weight: bold; }
-        .mode-admin { color: #ef4444; font-weight: bold; text-shadow: 0 0 8px #ef4444; }
-        #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-        .message { max-width: 85%; padding: 12px 16px; border-radius: 6px; line-height: 1.6; word-wrap: break-word; }
-        .user { background-color: #1e293b; align-self: flex-end; border-left: 4px solid #3b82f6; }
-        .ai { background-color: #111827; align-self: flex-start; border-left: 4px solid #4b5563; }
-        .ai.admin-msg { border-left: 4px solid #ef4444; box-shadow: inset 0 0 5px rgba(239, 68, 68, 0.2); }
-        #config-bar { background-color: #111827; padding: 10px 20px; display: flex; gap: 10px; border-bottom: 1px solid #1f2937; }
-        #config-bar input { background: #030712; border: 1px solid #374151; color: #fff; padding: 5px; font-family: monospace; }
-        #input-container { padding: 20px; background-color: #111827; display: flex; gap: 10px; border-top: 2px solid #1f2937; }
-        input[type="text"] { flex: 1; padding: 14px; border-radius: 4px; border: 1px solid #374151; background-color: #030712; color: #f1f5f9; font-size: 15px; font-family: monospace; }
-        button { padding: 14px 28px; background-color: #1f2937; color: #f1f5f9; border: 1px solid #374151; border-radius: 4px; cursor: pointer; font-weight: bold; font-family: monospace; }
-        button:hover { background-color: #374151; }
-        #admin-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(3, 7, 18, 0.9); justify-content: center; align-items: center; z-index: 1000; }
-        .modal-content { background-color: #111827; padding: 30px; border: 2px solid #ef4444; border-radius: 8px; text-align: center; }
-        .modal-content input { padding: 10px; background-color: #030712; border: 1px solid #ef4444; color: #ef4444; text-align: center; font-size: 18px; margin-bottom: 15px; }
-    </style>
-</head>
-<body>
+<script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
-    <!-- IP ve Model Ayar Barı -->
-    <div id="config-bar">
-        <input type="text" id="ollama-ip" placeholder="Ollama PC IP (Örn: 192.168.1.35)" value="http://localhost:11434">
-        <input type="text" id="ollama-model" placeholder="Model Adı (Örn: llama3)" value="llama3">
-    </div>
+        // Senin Firebase Proje Bilgilerin
+        const firebaseConfig = {
+            apiKey: "AIzaSyDHLts0hwnw1TzCddyAKb4vwrfWxaPGQAA",
+            authDomain: "hackerai-93c7d.firebaseapp.com",
+            projectId: "hackerai-93c7d",
+            storageBucket: "hackerai-93c7d.firebasestorage.app",
+            messagingSenderId: "644965623288",
+            appId: "1:644965623288:web:3e3f8514da4ddc7f58e20d",
+            measurementId: "G-SFBXHW3PJ2"
+        };
 
-    <div id="status-bar">
-        <div id="engine-status" style="color: #10b981;">OLLAMA MODU AKTİF</div>
-        <div>MOD: <span id="current-mode" class="mode-normal">NORMAL USER</span></div>
-    </div>
+        // Firebase Başlatma
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const googleProvider = new GoogleAuthProvider();
 
-    <div id="chat-container"></div>
-    
-    <div id="input-container">
-        <input type="text" id="user-input" placeholder="Ollama'ya mesaj gönder...">
-        <button id="send-btn">GÖNDER</button>
-    </div>
+        // OLLAMA AYARLARI
+        const OLLAMA_TARGET = "http://192.168.1.104:11434"; 
+        const DEFAULT_MODEL = "qwen2.5:1.5b"; 
+        const VISION_MODEL = "qwen2.5-vl";
 
-    <!-- Gizli Admin Giriş Paneli -->
-    <div id="admin-modal">
-        <div class="modal-content">
-            <h3>CRITICAL ACCESS REQUIRED</h3>
-            <p>Admin Şifresini Girin:</p>
-            <input type="password" id="admin-password" autocomplete="off"><br>
-            <button id="auth-btn">ONAYLA</button>
-            <button id="close-btn" style="border-color: #4b5563;">İPTAL</button>
-        </div>
-    </div>
-
-    <script>
-        const chatContainer = document.getElementById('chat-container');
-        const userInput = document.getElementById('user-input');
+        // DOM Elementleri
+        const authContainer = document.getElementById('auth-container');
+        const authTitle = document.getElementById('auth-title');
+        const authEmail = document.getElementById('auth-email');
+        const authPassword = document.getElementById('auth-password');
+        const authSubmitBtn = document.getElementById('auth-submit-btn');
+        const googleLoginBtn = document.getElementById('google-login-btn');
+        const authToggle = document.getElementById('auth-toggle');
+        const logoutBtn = document.getElementById('logout-btn');
+        const chatWindow = document.getElementById('chat-window');
+        const userPrompt = document.getElementById('user-prompt');
         const sendBtn = document.getElementById('send-btn');
-        const ollamaIpInput = document.getElementById('ollama-ip');
-        const ollamaModelInput = document.getElementById('ollama-model');
-        
+        const imageInput = document.getElementById('image-input');
+        const previewArea = document.getElementById('preview-area');
+        const statusIndicator = document.getElementById('status-indicator');
+        const historyList = document.getElementById('history-list');
+        const newChatBtn = document.getElementById('new-chat-btn');
         const adminModal = document.getElementById('admin-modal');
-        const adminPasswordInput = document.getElementById('admin-password');
+        const adminPass = document.getElementById('admin-pass');
         const authBtn = document.getElementById('auth-btn');
-        const closeBtn = document.getElementById('close-btn');
-        const currentModeEl = document.getElementById('current-mode');
 
+        let currentUser = null;
+        let isSignUpMode = false;
         let isAdmin = false;
-        const normalSystemPrompt = "Sen kurallara uyan, saygılı, etik ihlali yapmayan filtreli bir asistansın.";
+        let selectedImageBase64 = null;
+        let currentChatId = null;
+        let userChats = {};
 
-        function appendMessage(text, sender) {
-            const msgHtml = document.createElement('div');
-            msgHtml.classList.add('message', sender);
-            if(sender === 'ai' && isAdmin) msgHtml.classList.add('admin-msg');
-            msgHtml.textContent = text;
-            chatContainer.appendChild(msgHtml);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+        // GOOGLE GİRİŞİ
+        googleLoginBtn.addEventListener('click', async () => {
+            try {
+                await signInWithPopup(auth, googleProvider);
+            } catch (err) { alert("Google Auth Hatası: " + err.message); }
+        });
+
+        // E-POSTA GİRİŞ / KAYIT
+        authToggle.addEventListener('click', () => {
+            isSignUpMode = !isSignUpMode;
+            authTitle.textContent = isSignUpMode ? "HackerAI Kayıt Ol" : "HackerAI Giriş";
+            authSubmitBtn.textContent = isSignUpMode ? "Kayıt Ol" : "Giriş Yap";
+            authToggle.textContent = isSignUpMode ? "Zaten hesabın var mı? Giriş Yap" : "Hesabın yok mu? Kayıt Ol";
+        });
+
+        authSubmitBtn.addEventListener('click', async () => {
+            const email = authEmail.value.trim();
+            const password = authPassword.value.trim();
+            if(!email || !password) return alert("Boş alan bırakılamaz.");
+            try {
+                if(isSignUpMode) {
+                    await createUserWithEmailAndPassword(auth, email, password);
+                    alert("Kayıt başarılı!");
+                } else { await signInWithEmailAndPassword(auth, email, password); }
+            } catch (err) { alert("Hata: " + err.message); }
+        });
+
+        logoutBtn.addEventListener('click', () => signOut(auth));
+
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                authContainer.style.display = 'none';
+                await loadChatsFromFirebase();
+            } else {
+                currentUser = null;
+                authContainer.style.display = 'flex';
+                chatWindow.innerHTML = '';
+                historyList.innerHTML = '';
+            }
+        });
+
+        // BULUT VERİ SENKRONİZASYONU
+        async function loadChatsFromFirebase() {
+            if(!currentUser) return;
+            statusIndicator.textContent = "Bulut senkronizasyonu aktif...";
+            try {
+                const docRef = doc(db, "users", currentUser.uid);
+                const docSnap = await getDoc(docRef);
+                userChats = docSnap.exists() ? (docSnap.data().chats || {}) : {};
+                renderHistory();
+                if (Object.keys(userChats).length > 0) {
+                    currentChatId = Object.keys(userChats).pop();
+                    loadChat(currentChatId);
+                } else { startNewChat(); }
+            } catch (e) { console.error(e); }
+            statusIndicator.textContent = isAdmin ? "Sistem: Uncensored Admin" : "Sistem: Filtreli (Normal)";
         }
 
-        async function generateResponse() {
-            const text = userInput.value.trim();
-            if (!text) return;
+        async function syncWithFirebase() {
+            if(!currentUser || !currentChatId) return;
+            try { await setDoc(doc(db, "users", currentUser.uid), { chats: userChats }, { merge: true }); } 
+            catch (e) { console.error(e); }
+        }
 
-            appendMessage(text, 'user');
-            userInput.value = '';
-            document.getElementById('engine-status').textContent = "OLLAMA CEVAP VERİYOR...";
+        userPrompt.addEventListener('input', function() {
+            this.style.height = '24px';
+            this.style.height = (this.scrollHeight - 10) + 'px';
+        });
 
-            // Kullanıcının girdiği IP adresini düzenle
-            let targetIp = ollamaIpInput.value.trim();
-            if (!targetIp.startsWith('http')) targetIp = 'http://' + targetIp;
-            if (!targetIp.endsWith(':11434') && !targetIp.includes(':11434')) targetIp = targetIp + ':11434';
+        imageInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                selectedImageBase64 = event.target.result.split(',')[1];
+                previewArea.innerHTML = `<span style="color:#8e918f; font-size:14px;">📎 Analiz Kuyruğunda: ${file.name}</span>`;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        function renderHistory() {
+            historyList.innerHTML = '';
+            Object.keys(userChats).reverse().forEach(id => {
+                const item = document.createElement('div');
+                item.classList.add('history-item');
+                item.textContent = userChats[id].title || "Eski Sohbet";
+                item.onclick = () => loadChat(id);
+                historyList.appendChild(item);
+            });
+        }
+
+        function startNewChat() {
+            currentChatId = 'chat_' + Date.now();
+            userChats[currentChatId] = { title: "Yeni Sohbet", messages: [] };
+            chatWindow.innerHTML = '';
+            syncWithFirebase();
+            renderHistory();
+        }
+
+        function loadChat(id) {
+            currentChatId = id;
+            chatWindow.innerHTML = '';
+            userChats[id].messages.forEach(msg => {
+                appendMessageToUI(msg.text, msg.sender, msg.imgData, msg.isGeneratedImg);
+            });
+        }
+
+        function formatAIResponse(rawText) {
+            const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
+            let formatted = rawText;
+            
+            if (!rawText.includes('```')) {
+                const safeDiv = document.createElement('div');
+                safeDiv.textContent = rawText;
+                return safeDiv.innerHTML.replace(/\n/g, '<br>');
+            }
+
+            formatted = formatted.replace(codeBlockRegex, (match, lang, code) => {
+                const uniqueId = 'code_' + Math.random().toString(36).substr(2, 9);
+                const escapedCode = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                return `<pre><button class="copy-btn" onclick="window.copyToClipboard('${uniqueId}')">Kopyala</button><code id="${uniqueId}">${escapedCode}</code></pre>`;
+            });
+
+            return formatted.replace(/\n/g, '<br>').replace(/<\/pre><br>/g, '</pre>');
+        }
+
+        window.copyToClipboard = function(id) {
+            const codeText = document.getElementById(id).innerText;
+            navigator.clipboard.writeText(codeText).then(() => {
+                alert("Kod panoya kopyalandı!");
+            });
+        };
+
+        function appendMessageToUI(text, sender, imgData = null, isGeneratedImg = false) {
+            const row = document.createElement('div');
+            row.classList.add('message-row', `${sender}-row`);
+            if(sender === 'ai' && isAdmin) row.classList.add('admin-mode-active');
+
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('message');
+
+            if(sender === 'ai' && !isGeneratedImg) {
+                msgDiv.innerHTML = formatAIResponse(text);
+            } else {
+                msgDiv.textContent = text;
+            }
+
+            if (imgData && !isGeneratedImg) {
+                const img = document.createElement('img');
+                img.src = `data:image/jpeg;base64,${imgData}`;
+                img.classList.add('uploaded-img');
+                msgDiv.appendChild(img);
+            }
+
+            if (imgData && isGeneratedImg) {
+                const img = document.createElement('img');
+                img.src = imgData;
+                img.classList.add('generated-img');
+                msgDiv.appendChild(img);
+            }
+
+            row.appendChild(msgDiv);
+            chatWindow.appendChild(row);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        async function handleSend() {
+            const promptText = userPrompt.value.trim();
+            if (!promptText && !selectedImageBase64) return;
+            if (!currentUser) return alert("Oturum doğrulanmadı.");
+
+            if (!currentChatId) startNewChat();
+
+            if (userChats[currentChatId].messages.length === 0) {
+                userChats[currentChatId].title = promptText.substring(0, 20) || "Kod Analizi";
+            }
+
+            userChats[currentChatId].messages.push({ sender: 'user', text: promptText, imgData: selectedImageBase64 });
+            appendMessageToUI(promptText, 'user', selectedImageBase64);
+            
+            userPrompt.value = '';
+            userPrompt.style.height = '24px';
+            previewArea.innerHTML = '';
+            statusIndicator.textContent = "Qwen düşünüyor...";
+
+            if (promptText.toLowerCase().startsWith('çiz:')) {
+                const imgPrompt = promptText.substring(4).trim();
+                const genUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(imgPrompt)}?width=512&height=512&nologo=true`;
+                
+                setTimeout(() => {
+                    const aiTxt = `İstediğin görsel oluşturuldu: "${imgPrompt}"`;
+                    userChats[currentChatId].messages.push({ sender: 'ai', text: aiTxt, imgData: genUrl, isGeneratedImg: true });
+                    appendMessageToUI(aiTxt, 'ai', genUrl, true);
+                    syncWithFirebase();
+                }, 1000);
+                selectedImageBase64 = null;
+                return;
+            }
 
             try {
-                let systemInstruction = isAdmin ? "" : normalSystemPrompt;
-                
-                const response = await fetch(`${targetIp}/api/generate`, {
+                const activeModel = selectedImageBase64 ? VISION_MODEL : DEFAULT_MODEL;
+                const sysInstruction = isAdmin ? "" : "Sen kurallara uyan, filtreli ve net kodlar yazan bir yazılım asistanısın.";
+
+                const bodyPayload = {
+                    model: activeModel,
+                    prompt: promptText,
+                    system: sysInstruction,
+                    stream: false,
+                    options: { temperature: isAdmin ? 0.90 : 0.2 }
+                };
+
+                if (selectedImageBase64) bodyPayload.images = [selectedImageBase64];
+
+                const response = await fetch(`${OLLAMA_TARGET}/api/generate`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        model: ollamaModelInput.value.trim(),
-                        prompt: text,
-                        system: systemInstruction, // Filtre burada basılıyor veya kaldırılıyor
-                        stream: false,
-                        options: {
-                            temperature: isAdmin ? 0.9 : 0.2 // Adminse serbestlik tavan yapar
-                        }
-                    })
+                    body: JSON.stringify(bodyPayload)
                 });
 
                 const data = await response.json();
-                appendMessage(data.response, 'ai');
-            } catch (e) {
-                appendMessage("Ollama bağlantı hatası! IP adresini ve Ollama'nın açık olduğunu kontrol et. Hata: " + e.message, 'ai');
+                userChats[currentChatId].messages.push({ sender: 'ai', text: data.response });
+                appendMessageToUI(data.response, 'ai');
+                
+                await syncWithFirebase();
+                renderHistory();
+
+            } catch (error) {
+                appendMessageToUI("Ollama Motoru Kapalı. Termux terminalini kontrol et.", 'ai');
             }
 
-            document.getElementById('engine-status').textContent = "OLLAMA MODU AKTİF";
+            statusIndicator.textContent = isAdmin ? "Sistem: Uncensored Admin" : "Sistem: Filtreli (Normal)";
+            selectedImageBase64 = null;
         }
 
-        // CTRL + Q Kısayolu
         window.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key.toLowerCase() === 'q') {
                 e.preventDefault();
                 adminModal.style.display = 'flex';
-                adminPasswordInput.focus();
+                adminPass.focus();
             }
         });
 
-        function checkPassword() {
-            if (adminPasswordInput.value === '13123406') {
+        authBtn.addEventListener('click', () => {
+            if (adminPass.value === '13123406') {
                 isAdmin = true;
-                currentModeEl.textContent = "UNCENSORED ADMIN";
-                currentModeEl.className = "mode-admin";
-                alert("ACCESS GRANTED: Ollama üzerindeki tüm filtreler (varsa) bypass edildi.");
+                statusIndicator.textContent = "Sistem: Uncensored Admin";
+                statusIndicator.style.color = "var(--accent)";
+                alert("KÖKLÜ ERİŞİM İZNİ VERİLDİ: SANSÜRLER BYPASS EDİLDİ.");
                 adminModal.style.display = 'none';
             } else {
-                alert("GEÇERSİZ ŞİFRE.");
-                adminPasswordInput.value = '';
+                alert("ERİŞİM ENGELLENDİ.");
+                adminPass.value = '';
             }
-        }
+        });
 
-        authBtn.addEventListener('click', checkPassword);
-        adminPasswordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') checkPassword(); });
-        closeBtn.addEventListener('click', () => { adminModal.style.display = 'none'; });
-        sendBtn.addEventListener('click', generateResponse);
-        userInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') generateResponse(); });
+        sendBtn.addEventListener('click', handleSend);
+        userPrompt.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } });
+        newChatBtn.addEventListener('click', startNewChat);
     </script>
-</body>
-</html>
